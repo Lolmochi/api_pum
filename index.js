@@ -130,6 +130,7 @@ app.post('/transactions', (req, res) => {
 
           res.status(200).json({ 
             message: 'เพิ่มข้อมูลธุรกรรมสำเร็จ', 
+            transactionId: transaction_id,  // ส่ง transaction_id กลับไปด้วย
             pointsEarned: points_earned, 
             newPointsBalance: updated_points_balance,
             newDividend: new_dividend
@@ -139,9 +140,6 @@ app.post('/transactions', (req, res) => {
     });
   });
 });
-
-
-
 
   
 
