@@ -52,6 +52,33 @@ app.post('/staff/login', (req, res) => {
   });
 });
 
+app.post('/officers/login', (req, res) => {
+  const { officer_id, phone_number } = req.body;
+  
+  const query = `
+    SELECT * FROM officers
+    WHERE officer_id = ? AND phone_number = ?
+  `;
+  
+  db.query(query, [officer_id, phone_number], (err, results) => {
+    if (err) {
+      console.error('Error during login:', err);  // Log ข้อผิดพลาดที่เกิดขึ้น
+      res.status(500).json({ error: 'An error occurred during login' });
+      return;
+    }
+    
+    if (results.length === 0) {
+      res.status(404).json({ error: 'Invalid officer ID or phone number' });
+      return;
+    }
+    
+    res.json({
+      message: 'Login successful',
+      employeeId: officer_id
+    });
+  });
+});
+
 
 const { v4: uuidv4 } = require('uuid');
 
@@ -66,7 +93,7 @@ app.post('/transactions', (req, res) => {
   }
 
   const transaction_id = uuidv4();
-  const points_earned = Math.floor(amount / 10);
+  const points_earned = Math.floor(amount / 1);
   const transaction_date = new Date();
 
   // ค้นหาข้อมูลลูกค้า
@@ -256,6 +283,51 @@ app.get('/staff/:staff_id', (req, res) => {
     res.json(result[0]);
   });
 });
+
+// Endpoint สำหรับค้นหาสมาชิก
+app.get('/customers/advanced_search', (req, res) => {
+  const { searchBy, query } = req.query;
+
+  let results = customers.filter(customer => {
+    if (searchBy === 'customer_id') return customer.customer_id === query;
+    if (searchBy === 'phone_number') return customer.phone_number === query;
+    if (searchBy === 'name') return `${customer.first_name} ${customer.last_name}`.includes(query);
+    if (searchBy === 'transaction_id') return transactions.some(transaction => transaction.transaction_id === query && transaction.customer_id === customer.customer_id);
+    return false;
+  });
+
+  res.json(results);
+});
+
+// Endpoint สำหรับแก้ไขธุรกรรม
+app.put('/transactions/:id', (req, res) => {
+  const transactionId = req.params.id;
+  const updatedTransaction = req.body;
+
+  let transaction = transactions.find(t => t.transaction_id === transactionId);
+
+  if (!transaction) {
+    return res.status(404).json({ error: 'Transaction not found' });
+  }
+
+  Object.assign(transaction, updatedTransaction);
+
+  // คำนวณคะแนนและเงินปันผล
+  transaction.points_earned = Math.round(transaction.amount);
+  transaction.annual_dividend = (transaction.points_earned * 0.01).toFixed(2);
+
+  res.json(transaction);
+});
+
+// Endpoint สำหรับลบธุรกรรม
+app.delete('/transactions/:id', (req, res) => {
+  const transactionId = req.params.id;
+
+  transactions = transactions.filter(t => t.transaction_id !== transactionId);
+
+  res.json({ message: 'Transaction deleted successfully' });
+});
+
 
 
 app.listen(port, () => {
