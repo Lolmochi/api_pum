@@ -1,0 +1,361 @@
+const express = require('express');
+const mysql = require('mysql2/promise');
+const { v4: uuidv4 } = require('uuid');
+
+const app = express();
+app.use(express.json());
+
+// Database pool
+const pool = mysql.createPool({
+  host: 'localhost',
+  user: 'root',
+  password: '',
+  database: 'gas_station_loyalty',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+// Login for staff
+app.post('/staff/login', async (req, res) => {
+  const { staff_id, phone_number } = req.body;
+
+  const query = 'SELECT * FROM staff WHERE staff_id = ? AND phone_number = ?';
+
+  try {
+    const connection = await pool.getConnection();
+    const [results] = await connection.query(query, [staff_id, phone_number]);
+    connection.release();
+
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'Invalid staff ID or phone number' });
+    }
+
+    res.json({ message: 'Login successful', employeeId: staff_id });
+  } catch (err) {
+    console.error('Error during login:', err);
+    res.status(500).json({ error: 'An error occurred during login' });
+  }
+});
+
+// Login for officers
+app.post('/officers/login', async (req, res) => {
+  const { officer_id, phone_number } = req.body;
+
+  const query = 'SELECT * FROM officers WHERE officer_id = ? AND phone_number = ?';
+
+  try {
+    const connection = await pool.getConnection();
+    const [results] = await connection.query(query, [officer_id, phone_number]);
+    connection.release();
+
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'Invalid officer ID or phone number' });
+    }
+
+    res.json({ message: 'Login successful', employeeId: officer_id });
+  } catch (err) {
+    console.error('Error during login:', err);
+    res.status(500).json({ error: 'An error occurred during login' });
+  }
+});
+
+// Transaction creation
+app.post('/transactions', async (req, res) => {
+  const { phone_number, fuel_type, amount, staff_id } = req.body;
+
+  if (!phone_number || !fuel_type || isNaN(amount)) {
+    return res.status(400).json({ error: 'Invalid data received' });
+  }
+
+  const transaction_id = uuidv4();
+  const points_earned = Math.floor(amount / 1);
+  const transaction_date = new Date();
+
+  try {
+    const connection = await pool.getConnection();
+    
+    // Find customer
+    const [customer_result] = await connection.query('SELECT customer_id, points_balance FROM customers WHERE phone_number = ?', [phone_number]);
+    
+    if (customer_result.length === 0) {
+      connection.release();
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+
+    const customer_id = customer_result[0].customer_id;
+    const current_points_balance = customer_result[0].points_balance || 0;
+
+    // Find fuel type
+    const [fuel_result] = await connection.query('SELECT fuel_type_id FROM fuel_types WHERE fuel_type_name = ?', [fuel_type]);
+    
+    if (fuel_result.length === 0) {
+      connection.release();
+      return res.status(400).json({ error: 'Invalid fuel type' });
+    }
+
+    const fuel_type_id = fuel_result[0].fuel_type_id;
+
+    // Insert transaction
+    await connection.query(
+      'INSERT INTO transactions (transaction_id, customer_id, transaction_date, fuel_type_id, amount, points_earned, staff_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [transaction_id, customer_id, transaction_date, fuel_type_id, amount, points_earned, staff_id]
+    );
+
+    // Update customer points and dividend
+    const updated_points_balance = current_points_balance + points_earned;
+    const new_dividend = (updated_points_balance * 1) / 100;
+
+    await connection.query(
+      'UPDATE customers SET points_balance = ?, dividend = ? WHERE customer_id = ?',
+      [updated_points_balance, new_dividend, customer_id]
+    );
+
+    connection.release();
+    res.status(200).json({
+      message: 'Transaction added successfully',
+      transactionId: transaction_id,
+      pointsEarned: points_earned,
+      newPointsBalance: updated_points_balance,
+      newDividend: new_dividend
+    });
+  } catch (err) {
+    console.error('Error during transaction creation:', err.message);
+    res.status(500).json({ error: 'Transaction creation failed', details: err.message });
+  }
+});
+
+// Other routes remain unchanged but ensure proper async/await connection handling.
+
+
+// API สำหรับการดึงข้อมูลธุรกรรมทั้งหมด
+app.get('/transactions', async (req, res) => {
+  try {
+    const connection = await getConnection();
+    const [results] = await connection.query('SELECT * FROM transactions');
+    connection.release();
+    res.json(results);
+  } catch (err) {
+    console.error('Error fetching transactions:', err);
+    res.status(500).json({ error: 'Failed to fetch transactions', details: err.message });
+  }
+});
+
+// API สำหรับการดึงข้อมูลธุรกรรมตาม ID
+app.get('/transactions/:transaction_id', async (req, res) => {
+  const { transaction_id } = req.params;
+
+  try {
+    const connection = await getConnection();
+    const [result] = await connection.query(
+      'SELECT * FROM transactions WHERE transaction_id = ?',
+      [transaction_id]
+    );
+    connection.release();
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    res.json(result[0]);
+  } catch (err) {
+    console.error('Error fetching transaction:', err);
+    res.status(500).json({ error: 'Failed to fetch transaction', details: err.message });
+  }
+});
+
+// Route to search members
+app.get('/members/advanced_search', async (req, res) => {
+  const { searchBy, query } = req.query;
+  let sql = 'SELECT * FROM customers WHERE ';
+
+  switch (searchBy) {
+    case 'id':
+      sql += 'customer_id = ?';
+      break;
+    case 'name':
+      sql += 'CONCAT(first_name, " ", last_name) LIKE ?';
+      break;
+    case 'phone_number':
+      sql += 'phone_number = ?';
+      break;
+    default:
+      return res.status(400).send('Invalid searchBy parameter');
+  }
+
+  const values = searchBy === 'name' ? [`%${query}%`] : [query];
+
+  try {
+    const connection = await getConnection();
+    const [results] = await connection.query(sql, values);
+    connection.release();
+    res.json(results);
+  } catch (err) {
+    console.error('Error searching members:', err);
+    res.status(500).json({ error: 'Failed to search members', details: err.message });
+  }
+});
+
+
+// Route to edit a transaction
+app.put('/transactions/:id', async (req, res) => {
+  const { id } = req.params;
+  const { fuel_type, amount, points_earned, points_redeemed } = req.body;
+  const sql = 'UPDATE transactions SET fuel_type_id = ?, amount = ?, points_earned = ?, points_redeemed = ? WHERE transaction_id = ?';
+
+  try {
+    const connection = await getConnection();
+    const [fuelResult] = await connection.query(
+      'SELECT fuel_type_id FROM fuel_types WHERE fuel_type_name = ?',
+      [fuel_type]
+    );
+
+    if (fuelResult.length === 0) {
+      connection.release();
+      return res.status(400).json({ error: 'ประเภทน้ำมันไม่ถูกต้อง' });
+    }
+
+    const fuel_type_id = fuelResult[0].fuel_type_id;
+
+    await connection.query(sql, [fuel_type_id, amount, points_earned, points_redeemed, id]);
+    connection.release();
+    res.json({ message: 'Transaction updated successfully' });
+  } catch (err) {
+    console.error('Error updating transaction:', err);
+    res.status(500).json({ error: 'Failed to update transaction', details: err.message });
+  }
+});
+
+// Route to delete a transaction
+app.delete('/transactions/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const connection = await getConnection();
+    await connection.query('DELETE FROM transactions WHERE transaction_id = ?', [id]);
+    connection.release();
+    res.json({ message: 'Transaction deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting transaction:', err);
+    res.status(500).json({ error: 'Failed to delete transaction', details: err.message });
+  }
+});
+
+// API สำหรับการดึงข้อมูลธุรกรรมทั้งหมด
+app.get('/transactions', async (req, res) => {
+  try {
+    const connection = await getConnection();
+    const [results] = await connection.query('SELECT * FROM transactions');
+    connection.release();
+    res.json(results);
+  } catch (err) {
+    console.error('Error fetching transactions:', err);
+    res.status(500).json({ error: 'Failed to fetch transactions', details: err.message });
+  }
+});
+
+// API สำหรับการดึงข้อมูลธุรกรรมตาม ID
+app.get('/transactions/:transaction_id', async (req, res) => {
+  const { transaction_id } = req.params;
+
+  try {
+    const connection = await getConnection();
+    const [result] = await connection.query(
+      'SELECT * FROM transactions WHERE transaction_id = ?',
+      [transaction_id]
+    );
+    connection.release();
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    res.json(result[0]);
+  } catch (err) {
+    console.error('Error fetching transaction:', err);
+    res.status(500).json({ error: 'Failed to fetch transaction', details: err.message });
+  }
+});
+
+// Route to search members
+app.get('/members/advanced_search', async (req, res) => {
+  const { searchBy, query } = req.query;
+  let sql = 'SELECT * FROM customers WHERE ';
+
+  switch (searchBy) {
+    case 'id':
+      sql += 'customer_id = ?';
+      break;
+    case 'name':
+      sql += 'CONCAT(first_name, " ", last_name) LIKE ?';
+      break;
+    case 'phone_number':
+      sql += 'phone_number = ?';
+      break;
+    default:
+      return res.status(400).send('Invalid searchBy parameter');
+  }
+
+  const values = searchBy === 'name' ? [`%${query}%`] : [query];
+
+  try {
+    const connection = await getConnection();
+    const [results] = await connection.query(sql, values);
+    connection.release();
+    res.json(results);
+  } catch (err) {
+    console.error('Error searching members:', err);
+    res.status(500).json({ error: 'Failed to search members', details: err.message });
+  }
+});
+
+
+// Route to edit a transaction
+app.put('/transactions/:id', async (req, res) => {
+  const { id } = req.params;
+  const { fuel_type, amount, points_earned, points_redeemed } = req.body;
+  const sql = 'UPDATE transactions SET fuel_type_id = ?, amount = ?, points_earned = ?, points_redeemed = ? WHERE transaction_id = ?';
+
+  try {
+    const connection = await getConnection();
+    const [fuelResult] = await connection.query(
+      'SELECT fuel_type_id FROM fuel_types WHERE fuel_type_name = ?',
+      [fuel_type]
+    );
+
+    if (fuelResult.length === 0) {
+      connection.release();
+      return res.status(400).json({ error: 'ประเภทน้ำมันไม่ถูกต้อง' });
+    }
+
+    const fuel_type_id = fuelResult[0].fuel_type_id;
+
+    await connection.query(sql, [fuel_type_id, amount, points_earned, points_redeemed, id]);
+    connection.release();
+    res.json({ message: 'Transaction updated successfully' });
+  } catch (err) {
+    console.error('Error updating transaction:', err);
+    res.status(500).json({ error: 'Failed to update transaction', details: err.message });
+  }
+});
+
+// Route to delete a transaction
+app.delete('/transactions/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const connection = await getConnection();
+    await connection.query('DELETE FROM transactions WHERE transaction_id = ?', [id]);
+    connection.release();
+    res.json({ message: 'Transaction deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting transaction:', err);
+    res.status(500).json({ error: 'Failed to delete transaction', details: err.message });
+  }
+});
+
+
+const PORT = 3000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});

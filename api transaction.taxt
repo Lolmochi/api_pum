@@ -2,11 +2,6 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const mysql = require('mysql2');
-const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
-
-
 
 const app = express();
 const port = 3000;
@@ -30,83 +25,6 @@ db.connect((err) => {
   console.log('Connected to the MySQL database');
 });
 
-// Setup for multer
-const uploadPath = path.join(__dirname, 'uploads');
-
-if (!fs.existsSync(uploadPath)) {
-  fs.mkdirSync(uploadPath, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadPath);
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + '-' + file.originalname);
-  }
-});
-
-const upload = multer({ storage: storage });
-
-// File upload route
-app.post('/upload', upload.single('file'), (req, res) => {
-  console.log('Uploaded File:', req.file);
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
-  }
-  res.send({
-    message: 'File uploaded successfully!',
-    file: req.file
-  });
-});
-
-// Create a new reward
-app.post('/rewards', upload.single('image'), (req, res) => {
-  const { reward_name, points_required, description } = req.body;
-  const image = req.file ? req.file.filename : null;
-
-  console.log('Request Body:', req.body);
-  console.log('Uploaded File:', req.file);
-
-  if (!reward_name || !points_required) {
-    return res.status(400).json({ error: 'Please provide reward_name and points_required' });
-  }
-
-  const query = 'INSERT INTO rewards (reward_name, points_required, description, image) VALUES (?, ?, ?, ?)';
-  const values = [reward_name, points_required, description, image];
-
-  console.log('Executing Query:', query, values);
-
-  db.query(query, values, (err, result) => {
-    if (err) {
-      console.error('Database error:', err);
-      return res.status(500).json({ error: 'Database error', details: err.message });
-    }
-    res.status(201).json({
-      message: 'Reward added successfully',
-      reward_id: result.insertId,
-      reward_name,
-      points_required,
-      description,
-      image
-    });
-  });
-});
-
-// Get all rewards
-app.get('/rewards', (req, res) => {
-  const query = 'SELECT * FROM rewards';
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error('Database error:', err);
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.status(200).json(results);
-  });
-});
-
-// Serve static images
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.post('/staff/login', (req, res) => {
   const { staff_id, phone_number } = req.body;
   
@@ -393,17 +311,6 @@ app.get('/staff/:staff_id', (req, res) => {
   });
 });
 
-app.get('/transactions/latest', async (req, res) => {
-  try {
-    const transactions = await db.query(
-      'SELECT transaction_id, customer_id, transaction_date, fuel_type_id, amount FROM transactions ORDER BY transaction_date DESC LIMIT 10'
-    );
-    res.json(transactions);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to load latest transactions' });
-  }
-});
 
 app.listen(port, () => {
   console.log(`Server is running on http://127.0.0.1:${port}`);
