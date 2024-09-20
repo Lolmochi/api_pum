@@ -6,8 +6,6 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 
-
-
 const app = express();
 const port = 3000;
 
@@ -48,22 +46,21 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
-// File upload route
-app.post('/upload', upload.single('file'), (req, res) => {
-  console.log('Uploaded File:', req.file);
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
+// Function to generate a random 10-character alphanumeric reward ID
+function generateRewardId() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let rewardId = '';
+  for (let i = 0; i < 10; i++) {
+    rewardId += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  res.send({
-    message: 'File uploaded successfully!',
-    file: req.file
-  });
-});
+  return rewardId;
+}
 
 // Create a new reward
 app.post('/rewards', upload.single('image'), (req, res) => {
   const { reward_name, points_required, description } = req.body;
   const image = req.file ? req.file.filename : null;
+  const reward_id = generateRewardId();  // Generate reward_id
 
   console.log('Request Body:', req.body);
   console.log('Uploaded File:', req.file);
@@ -72,8 +69,13 @@ app.post('/rewards', upload.single('image'), (req, res) => {
     return res.status(400).json({ error: 'Please provide reward_name and points_required' });
   }
 
-  const query = 'INSERT INTO rewards (reward_name, points_required, description, image) VALUES (?, ?, ?, ?)';
-  const values = [reward_name, points_required, description, image];
+  // Validate that points_required is a number
+  if (isNaN(points_required)) {
+    return res.status(400).json({ error: 'Points required must be a number' });
+  }
+
+  const query = 'INSERT INTO rewards (reward_id, reward_name, points_required, description, image) VALUES (?, ?, ?, ?, ?)';
+  const values = [reward_id, reward_name, points_required, description, image];
 
   console.log('Executing Query:', query, values);
 
@@ -84,7 +86,7 @@ app.post('/rewards', upload.single('image'), (req, res) => {
     }
     res.status(201).json({
       message: 'Reward added successfully',
-      reward_id: result.insertId,
+      reward_id,  // Include the generated reward_id
       reward_name,
       points_required,
       description,
@@ -107,32 +109,6 @@ app.get('/rewards', (req, res) => {
 
 // Serve static images
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.post('/staff/login', (req, res) => {
-  const { staff_id, phone_number } = req.body;
-  
-  const query = `
-    SELECT * FROM staff 
-    WHERE staff_id = ? AND phone_number = ?
-  `;
-  
-  db.query(query, [staff_id, phone_number], (err, results) => {
-    if (err) {
-      console.error('Error during login:', err);  // Log ข้อผิดพลาดที่เกิดขึ้น
-      res.status(500).json({ error: 'An error occurred during login' });
-      return;
-    }
-    
-    if (results.length === 0) {
-      res.status(404).json({ error: 'Invalid staff ID or phone number' });
-      return;
-    }
-    
-    res.json({
-      message: 'Login successful',
-      employeeId: staff_id
-    });
-  });
-});
 
 app.post('/officers/login', (req, res) => {
   const { officer_id, phone_number } = req.body;
