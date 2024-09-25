@@ -107,6 +107,64 @@ app.get('/rewards', (req, res) => {
   });
 });
 
+// Delete a reward by reward_id
+app.delete('/rewards/:id', (req, res) => {
+  const rewardId = req.params.id;
+  const query = 'DELETE FROM rewards WHERE reward_id = ?';
+
+  db.query(query, [rewardId], (err, result) => {
+    if (err) {
+      console.error('Error deleting reward:', err);
+      return res.status(500).json({ error: 'Error deleting reward' });
+    }
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Reward not found' });
+    }
+    res.json({ message: 'Reward deleted successfully' });
+  });
+});
+
+// Update a reward by reward_id
+app.put('/rewards/:id', upload.single('image'), (req, res) => {
+  const rewardId = req.params.id;
+  const { reward_name, points_required, description } = req.body;
+  const image = req.file ? req.file.filename : null;
+
+  // แสดงผลข้อมูลที่ส่งมาเพื่อการตรวจสอบ
+  console.log('Request Body:', req.body);
+  console.log('Uploaded File:', req.file);
+
+  let query = 'UPDATE rewards SET reward_name = ?, points_required = ?, description = ?';
+  const values = [reward_name, points_required, description];
+
+  if (image) {
+    query += ', image = ?';
+    values.push(image);
+  }
+
+  query += ' WHERE reward_id = ?';
+  values.push(rewardId);
+
+  db.query(query, values, (err, result) => {
+    if (err) {
+      console.error('Database error:', err);
+      return res.status(500).json({ error: 'Error updating reward' });
+    }
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Reward not found' });
+    }
+    res.json({
+      message: 'Reward updated successfully',
+      reward_id: rewardId,
+      reward_name,
+      points_required,
+      description,
+      image
+    });
+  });
+});
+
+
 // Serve static images
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -136,6 +194,107 @@ app.post('/officers/login', (req, res) => {
     });
   });
 });
+
+app.post('/staff/login', (req, res) => {
+  const { staff_id, phone_number } = req.body;
+  
+  const query = `
+    SELECT * FROM staff
+    WHERE staff_id = ? AND phone_number = ?
+  `;
+  
+  db.query(query, [staff_id, phone_number], (err, results) => {
+    if (err) {
+      console.error('Error during login:', err);  // Log ข้อผิดพลาดที่เกิดขึ้น
+      res.status(500).json({ error: 'An error occurred during login' });
+      return;
+    }
+    
+    if (results.length === 0) {
+      res.status(404).json({ error: 'Invalid staff ID or phone number' });
+      return;
+    }
+    
+    res.json({
+      message: 'Login successful',
+      employeeId: staff_id
+    });
+  });
+});
+
+// API สำหรับค้นหาธุรกรรม
+app.get('/transactions', (req, res) => {
+  const { query, customer_id, staff_id, start_date, end_date } = req.query;
+
+  let sql = 'SELECT * FROM transactions WHERE 1=1';
+  const values = [];
+
+  if (query) {
+    sql += ' AND (transaction_id LIKE ? OR customer_id LIKE ?)';
+    values.push(`%${query}%`, `%${query}%`);
+  }
+
+  if (customer_id) {
+    sql += ' AND customer_id = ?';
+    values.push(customer_id);
+  }
+
+  if (staff_id) {
+    sql += ' AND staff_id = ?';
+    values.push(staff_id);
+  }
+
+  if (start_date && end_date) {
+    sql += ' AND transaction_date BETWEEN ? AND ?';
+    values.push(start_date, end_date);
+  }
+
+  db.query(sql, values, (err, results) => {
+    if (err) {
+      console.error('Error executing query:', err);
+      return res.status(500).json({ error: 'Database query error' });
+    }
+    res.json(results);
+  });
+});
+
+// API for editing (updating) fuel_type and amount of a transaction
+app.put('/transactions/:transaction_id', (req, res) => {
+  const transactionId = req.params.transaction_id;
+  const { fuel_type_id, amount } = req.body;
+
+  const sql = 'UPDATE transactions SET fuel_type_id = ?, amount = ?, modified_at = NOW() WHERE transaction_id = ?';
+  const values = [fuel_type_id, amount, transactionId];
+
+  db.query(sql, values, (err, result) => {
+    if (err) {
+      console.error('Error executing query:', err);
+      return res.status(500).json({ error: 'Database update error' });
+    }
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    res.json({ message: 'Transaction updated successfully' });
+  });
+});
+
+
+// API to get all fuel types
+app.get('/fuel_types', (req, res) => {
+  const sql = 'SELECT fuel_type_id, fuel_type_name FROM fuel_types';
+  
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error('Error fetching fuel types:', err);
+      return res.status(500).json({ error: 'Database query error' });
+    }
+    
+    res.json(results);
+  });
+});
+
 
 
 const { v4: uuidv4 } = require('uuid');
