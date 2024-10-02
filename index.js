@@ -222,9 +222,129 @@ app.post('/staff/login', (req, res) => {
   });
 });
 
+// API สำหรับการ login ลูกค้า
+app.post('/login/customer', (req, res) => {
+  const { customer_id, phone_number } = req.body;
+
+  const query = `SELECT * FROM customers WHERE customer_id = ? AND phone_number = ?`;
+  db.query(query, [customer_id, phone_number], (err, results) => {
+    if (err) {
+      console.error('Database query error:', err);
+      return res.status(500).json({ message: 'มีข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล' });
+    }
+
+    if (results.length > 0) {
+      console.log('Login successful:', results[0]);
+      res.json({ message: 'ล็อกอินสำเร็จ', customer: results[0] });
+    } else {
+      console.log('Invalid login credentials');
+      res.status(401).json({ message: 'ข้อมูลล็อกอินไม่ถูกต้อง' });
+    }
+  });
+});
+
+// API สำหรับดึงข้อมูลลูกค้าตาม customer_id
+app.get('/customer/:customer_id', (req, res) => {
+  const { customer_id } = req.params;
+
+  const query = `SELECT * FROM customers WHERE customer_id = ?`;
+  db.query(query, [customer_id], (err, results) => {
+    if (err) {
+      return res.status(500).json({ message: 'มีข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล' });
+    }
+    
+    if (results.length > 0) {
+      res.json({ customer: results[0] });
+    } else {
+      res.status(404).json({ message: 'ไม่พบข้อมูลลูกค้า' });
+    }
+  });
+});
+
+// API สำหรับดึงข้อมูลการทำธุรกรรม
+app.get('/transactions/:customer_id', (req, res) => {
+  const customerId = req.params.customer_id;
+
+  const query = `
+    SELECT t.transaction_id, t.transaction_date, t.amount, f.fuel_type_name
+    FROM transactions t
+    JOIN fuel_types f ON t.fuel_type_id = f.fuel_type_id
+    WHERE t.customer_id = ?
+    ORDER BY t.transaction_date DESC
+  `;
+
+  db.query(query, [customerId], (err, results) => {
+    if (err) {
+      console.error('Database query error:', err);
+      return res.status(500).json({ message: 'Database query error' });
+    }
+
+    res.json(results);
+  });
+});
+
+// API สำหรับดึงข้อมูลรางวัล
+app.get('/rewards', (req, res) => {
+  const query = `SELECT * FROM rewards`;
+  db.query(query, (err, results) => {
+      if (err) {
+          return res.status(500).json({ message: 'มีข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล' });
+      }
+      res.json(results);
+  });
+});
+
+// Redeem reward
+app.post('/customers/redeem', (req, res) => {
+  const { customer_id, reward_id, points_used } = req.body;
+
+  // ตรวจสอบคะแนนของลูกค้า
+  const checkPoints = `SELECT points_balance FROM customers WHERE customer_id = ?`;
+  db.query(checkPoints, [customer_id], (err, results) => {
+    if (err || results.length === 0) {
+      return res.status(500).json({ message: 'มีข้อผิดพลาดในการตรวจสอบคะแนน' });
+    }
+
+    const pointsBalance = results[0].points_balance;
+    if (pointsBalance < points_used) {
+      return res.status(400).json({ message: 'คะแนนไม่เพียงพอ' });
+    }
+
+    // อัปเดตคะแนนของลูกค้า
+    const updateCustomerPoints = `UPDATE customers SET points_balance = points_balance - ? WHERE customer_id = ?`;
+    db.query(updateCustomerPoints, [points_used, customer_id], (err) => {
+      if (err) {
+        return res.status(500).json({ message: 'ไม่สามารถอัพเดตคะแนนได้' });
+      }
+
+      // อัปเดต dividend เป็น 1% ของ points_balance ใหม่
+      const newPointsBalance = pointsBalance - points_used; // ค่าคะแนนหลังจากหักคะแนน
+      const newDividend = newPointsBalance * 0.01; // คำนวณ dividend เป็น 1% ของ points_balance
+
+      const updateDividend = `UPDATE customers SET dividend = ? WHERE customer_id = ?`;
+      db.query(updateDividend, [newDividend, customer_id], (err) => {
+        if (err) {
+          return res.status(500).json({ message: 'ไม่สามารถอัปเดตปันผลได้' });
+        }
+
+        // บันทึกการแลกของรางวัลในตาราง redemptions โดยให้ staff_id เป็น NULL
+        const insertRedemption = `INSERT INTO redemptions (customer_id, reward_id, redemption_date, points_used, status, staff_id) VALUES (?, ?, NOW(), ?, 'pending', NULL)`;
+
+        db.query(insertRedemption, [customer_id, reward_id, points_used], (err) => {
+          if (err) {
+            return res.status(500).json({ message: 'ไม่สามารถบันทึกการแลกของรางวัลได้' });
+          }
+          res.status(200).json({ message: 'แลกของรางวัลสำเร็จ' });
+        });
+      });
+    });
+  });
+});
+
+
 // API สำหรับค้นหาธุรกรรม
 app.get('/transactions', (req, res) => {
-  const { query, customer_id, staff_id, start_date, end_date } = req.query;
+  const { query, customer_id, staff_id, officer_id, start_date, end_date } = req.query; 
 
   let sql = 'SELECT * FROM transactions WHERE 1=1';
   const values = [];
@@ -244,6 +364,11 @@ app.get('/transactions', (req, res) => {
     values.push(staff_id);
   }
 
+  if (officer_id) { 
+    sql += ' AND officer_id = ?';
+    values.push(officer_id);
+  }
+
   if (start_date && end_date) {
     sql += ' AND transaction_date BETWEEN ? AND ?';
     values.push(start_date, end_date);
@@ -258,17 +383,23 @@ app.get('/transactions', (req, res) => {
   });
 });
 
-// API for editing (updating) fuel_type and amount of a transaction
+// API for updating (editing) fuel_type and amount of a transaction, including officer_id
 app.put('/transactions/:transaction_id', (req, res) => {
   const transactionId = req.params.transaction_id;
-  const { fuel_type_id, amount } = req.body;
+  const { fuel_type_id, points_earned, officer_id } = req.body;
 
-  const sql = 'UPDATE transactions SET fuel_type_id = ?, amount = ?, modified_at = NOW() WHERE transaction_id = ?';
-  const values = [fuel_type_id, amount, transactionId];
+  // SQL query for updating the transaction details
+  const updateTransactionSql = `
+    UPDATE transactions
+    SET fuel_type_id = ?, points_earned = ?, modified_at = NOW(), officer_id = ?
+    WHERE transaction_id = ?
+  `;
+  const updateTransactionValues = [fuel_type_id, points_earned, officer_id, transactionId];
 
-  db.query(sql, values, (err, result) => {
+  // Update transaction first
+  db.query(updateTransactionSql, updateTransactionValues, (err, result) => {
     if (err) {
-      console.error('Error executing query:', err);
+      console.error('Error executing transaction update query:', err);
       return res.status(500).json({ error: 'Database update error' });
     }
 
@@ -276,7 +407,65 @@ app.put('/transactions/:transaction_id', (req, res) => {
       return res.status(404).json({ error: 'Transaction not found' });
     }
 
-    res.json({ message: 'Transaction updated successfully' });
+    // Now calculate total points for the customer based on all their transactions
+    const getCustomerIdSql = `
+      SELECT customer_id FROM transactions WHERE transaction_id = ?
+    `;
+
+    db.query(getCustomerIdSql, [transactionId], (err, customerResult) => {
+      if (err) {
+        console.error('Error fetching customer_id:', err);
+        return res.status(500).json({ error: 'Failed to fetch customer_id' });
+      }
+
+      const customer_id = customerResult[0]?.customer_id;
+
+      const totalPointsSql = `
+        SELECT SUM(points_earned) AS total_points FROM transactions WHERE customer_id = ?
+      `;
+
+      db.query(totalPointsSql, [customer_id], (err, pointsResult) => {
+        if (err) {
+          console.error('Error calculating total points:', err);
+          return res.status(500).json({ error: 'Failed to calculate total points' });
+        }
+
+        const total_points = pointsResult[0]?.total_points || 0; // ใช้ 0 ถ้าไม่มีธุรกรรม
+
+        const updatePointsSql = `
+          UPDATE customers
+          SET points_balance = ? -- Update points_balance directly
+          WHERE customer_id = ?
+        `;
+
+        // คำนวณ dividend เป็น 1% ของ points_balance
+        const dividend = total_points * 0.01;
+
+        // Update points_balance และ dividend ในคำสั่งเดียว
+        db.query(updatePointsSql, [total_points, customer_id], (err, updateResult) => {
+          if (err) {
+            console.error('Error updating points_balance:', err);
+            return res.status(500).json({ error: 'Failed to update points_balance' });
+          }
+
+          // อัปเดต dividend ใน customers
+          const updateDividendSql = `
+            UPDATE customers
+            SET dividend = ? -- Update dividend
+            WHERE customer_id = ?
+          `;
+
+          db.query(updateDividendSql, [dividend, customer_id], (err, dividendResult) => {
+            if (err) {
+              console.error('Error updating dividend:', err);
+              return res.status(500).json({ error: 'Failed to update dividend' });
+            }
+
+            res.json({ message: 'Transaction, points_balance, and dividend updated successfully', total_points: total_points, dividend: dividend });
+          });
+        });
+      });
+    });
   });
 });
 
@@ -295,23 +484,88 @@ app.get('/fuel_types', (req, res) => {
   });
 });
 
+// ลบ redemption ตาม ID
+app.delete('/redemptions/:redemptionId', (req, res) => {
+  const redemptionId = req.params.redemptionId;
 
+  const deleteQuery = 'DELETE FROM redemptions WHERE redemption_id = ?';
 
-const { v4: uuidv4 } = require('uuid');
+  db.query(deleteQuery, [redemptionId], (err, result) => {
+    if (err) {
+      console.error('Error deleting redemption: ', err);
+      return res.status(500).json({ message: 'Error deleting redemption.' });
+    }
+
+    if (result.affectedRows > 0) {
+      res.status(200).json({ message: `Redemption ${redemptionId} deleted successfully.` });
+    } else {
+      res.status(404).json({ message: 'Redemption not found.' });
+    }
+  });
+});
+
+// API สำหรับดึงข้อมูลการแลกสินค้าที่สถานะเป็น 'pending'
+app.post('/redemptions/get_redemptions', (req, res) => {
+  const { staff_id } = req.body;
+
+  const query = `
+    SELECT redemption_id, customer_id, reward_id, redemption_date, points_used, status
+    FROM redemptions
+    WHERE status = 'pending'
+  `;
+
+  db.query(query, [staff_id], (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: 'Database connection error' });
+    }
+
+    res.json({ redemptions: results });
+  });
+});
+
+// API สำหรับอัปเดตสถานะการแลกสินค้าเป็น 'completed'
+app.post('/redemptions/update_redemption_status', (req, res) => {
+  const { redemption_id, staff_id } = req.body;
+
+  const query = `
+    UPDATE redemptions
+    SET status = 'completed', staff_id = ?
+    WHERE redemption_id = ?
+  `;
+
+  db.query(query, [staff_id, redemption_id], (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: 'Failed to update redemption status' });
+    }
+
+    res.json({ message: 'Redemption status updated successfully' });
+  });
+});
+
+// ใช้ body-parser เพื่อให้ Express สามารถอ่าน body ของ request
+app.use(bodyParser.json());
+
+// ฟังก์ชันสำหรับสร้าง transaction_id
+function generateTransactionId() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const randomString = Array.from({ length: 10 }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
+  return `${randomString}`;
+}
 
 // 1.1.1 API สำหรับการบันทึกข้อมูลธุรกรรม
 app.post('/transactions', (req, res) => {
-  const { phone_number, fuel_type, amount, staff_id } = req.body;
+  const { phone_number, fuel_type, points_earned, staff_id } = req.body;
 
   console.log('Request Body:', req.body);
 
-  if (!phone_number || !fuel_type || isNaN(amount)) {
+  if (!phone_number || !fuel_type || isNaN(points_earned)) {
     return res.status(400).json({ error: 'ข้อมูลที่รับมาไม่ถูกต้อง' });
   }
 
-  const transaction_id = uuidv4();
-  const points_earned = Math.floor(amount / 1);
-  const transaction_date = new Date();
+  // สร้างหมายเลขประจำตัวธุรกรรมโดยใช้ฟังก์ชัน generateTransactionId
+  const transaction_id = generateTransactionId();
 
   // ค้นหาข้อมูลลูกค้า
   const customer_query = 'SELECT customer_id, points_balance FROM customers WHERE phone_number = ?';
@@ -347,10 +601,10 @@ app.post('/transactions', (req, res) => {
       // บันทึกข้อมูลธุรกรรม
       const insert_query = `
         INSERT INTO transactions 
-        (transaction_id, customer_id, transaction_date, fuel_type_id, amount, points_earned, staff_id) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (transaction_id, customer_id, transaction_date, fuel_type_id, points_earned, staff_id) 
+        VALUES (?, ?, NOW(), ?, ?, ?)
       `;
-      db.query(insert_query, [transaction_id, customer_id, transaction_date, fuel_type_id, amount, points_earned, staff_id], (err, result) => {
+      db.query(insert_query, [transaction_id, customer_id, fuel_type_id, points_earned, staff_id], (err, result) => {
         if (err) {
           console.error('ข้อผิดพลาดในการเพิ่มข้อมูลธุรกรรม:', err.message);
           return res.status(500).json({ error: 'เกิดข้อผิดพลาดในการเพิ่มข้อมูลธุรกรรม', details: err.message });
@@ -384,7 +638,6 @@ app.post('/transactions', (req, res) => {
     });
   });
 });
-
   
 
 // 1.1.2 API สำหรับการดึงข้อมูลธุรกรรมทั้งหมด
