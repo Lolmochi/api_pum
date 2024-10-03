@@ -793,6 +793,63 @@ app.get('/transactions/latest', async (req, res) => {
   }
 });
 
+// Endpoint สำหรับดึงรายการปีที่มีในตาราง annual_dividends
+app.get('/annual_dividends/years', (req, res) => {
+  const query = 'SELECT DISTINCT year FROM annual_dividends ORDER BY year DESC';
+
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching years:', err);
+      return res.status(500).json({ error: 'Failed to fetch years' });
+    }
+
+    const years = results.map(row => row.year.toString());
+    res.json(years);
+  });
+});
+
+
+// Endpoint สำหรับดึงรายชื่อลูกค้า
+app.get('/customers', (req, res) => {
+  const query = 'SELECT customer_id, first_name, last_name FROM customers';
+
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching customers:', err);
+      return res.status(500).json({ error: 'Failed to fetch customers' });
+    }
+
+    res.json(results);
+  });
+});
+
+// Endpoint สำหรับดึงข้อมูลปันผลรายปี พร้อมการกรองตามปีและลูกค้า
+app.get('/annual_dividends', (req, res) => {
+  const { year, customer_id } = req.query;
+
+  let query = 'SELECT * FROM annual_dividends WHERE 1=1';
+  const params = [];
+
+  if (year) {
+    query += ' AND year = ?';
+    params.push(year);
+  }
+
+  if (customer_id) {
+    query += ' AND customer_id = ?';
+    params.push(customer_id);
+  }
+
+  db.query(query, params, (err, results) => {
+    if (err) {
+      console.error('Error fetching annual dividends:', err);
+      return res.status(500).json({ error: 'Failed to fetch annual dividends' });
+    }
+
+    res.json(results);
+  });
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://127.0.0.1:${port}`);
 });
