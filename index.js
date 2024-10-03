@@ -266,7 +266,7 @@ app.get('/transactions/:customer_id', (req, res) => {
   const customerId = req.params.customer_id;
 
   const query = `
-    SELECT t.transaction_id, t.transaction_date, t.amount, f.fuel_type_name
+    SELECT t.transaction_id, t.transaction_date, t.points_balance, f.fuel_type_name
     FROM transactions t
     JOIN fuel_types f ON t.fuel_type_id = f.fuel_type_id
     WHERE t.customer_id = ?
@@ -383,7 +383,7 @@ app.get('/transactions', (req, res) => {
   });
 });
 
-// API for updating (editing) fuel_type and amount of a transaction, including officer_id
+// API for updating (editing) fuel_type and points_balance of a transaction, including officer_id
 app.put('/transactions/:transaction_id', (req, res) => {
   const transactionId = req.params.transaction_id;
   const { fuel_type_id, points_earned, officer_id } = req.body;
@@ -484,23 +484,61 @@ app.get('/fuel_types', (req, res) => {
   });
 });
 
-// ลบ redemption ตาม ID
-app.delete('/redemptions/:redemptionId', (req, res) => {
-  const redemptionId = req.params.redemptionId;
+// API สำหรับลบรายการการแลกสินค้า
+app.post('/redemptions/delete_redemption', (req, res) => {
+  const { redemption_id } = req.body;
 
-  const deleteQuery = 'DELETE FROM redemptions WHERE redemption_id = ?';
+  const query = `
+    DELETE FROM redemptions
+    WHERE redemption_id = ?
+  `;
 
-  db.query(deleteQuery, [redemptionId], (err, result) => {
+  db.query(query, [redemption_id], (err, results) => {
     if (err) {
-      console.error('Error deleting redemption: ', err);
-      return res.status(500).json({ message: 'Error deleting redemption.' });
+      console.error(err);
+      return res.status(500).json({ message: 'Database connection error' });
+    }
+    
+    if (results.affectedRows === 0) {
+      return res.status(404).json({ message: 'Redemption not found' });
     }
 
-    if (result.affectedRows > 0) {
-      res.status(200).json({ message: `Redemption ${redemptionId} deleted successfully.` });
-    } else {
-      res.status(404).json({ message: 'Redemption not found.' });
+    res.json({ message: 'Redemption deleted successfully!' });
+  });
+});
+
+// API สำหรับดึงรายการการแลกสินค้าตามสถานะและค้นหาชื่อรางวัล
+app.post('/redemptions/search_redemptions', (req, res) => {
+  const { status, reward_name } = req.body; // status: pending/completed, reward_name: ค้นหาตามชื่อ
+
+  let query = `
+    SELECT redemption_id, customer_id, reward_id, redemption_date, points_used, status, rewards.reward_name
+    FROM redemptions
+    JOIN rewards ON redemptions.reward_id = rewards.reward_id
+    WHERE 1=1
+  `;
+
+  const queryParams = [];
+
+  // กรองตามสถานะ (pending/completed) ถ้ามี
+  if (status) {
+    query += ' AND status = ?';
+    queryParams.push(status);
+  }
+
+  // ค้นหาด้วยชื่อรางวัลถ้ามี
+  if (reward_name) {
+    query += ' AND rewards.reward_name LIKE ?';
+    queryParams.push(`%${reward_name}%`);
+  }
+
+  db.query(query, queryParams, (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: 'Database connection error' });
     }
+
+    res.json({ redemptions: results });
   });
 });
 
@@ -537,10 +575,14 @@ app.post('/redemptions/update_redemption_status', (req, res) => {
   db.query(query, [staff_id, redemption_id], (err, results) => {
     if (err) {
       console.error(err);
-      return res.status(500).json({ message: 'Failed to update redemption status' });
+      return res.status(500).json({ message: 'Database connection error' });
+    }
+    
+    if (results.affectedRows === 0) {
+      return res.status(404).json({ message: 'Redemption not found' });
     }
 
-    res.json({ message: 'Redemption status updated successfully' });
+    res.json({ message: 'Redemption status updated successfully!' });
   });
 });
 
@@ -696,7 +738,7 @@ app.get('/transactions/search', (req, res) => {
 // API สำหรับการแก้ไข transaction
 app.put('/transactions/:transaction_id', (req, res) => {
   const { transaction_id } = req.params;
-  const { fuel_type, amount, officer_id } = req.body;
+  const { fuel_type, points_balance, officer_id } = req.body;
 
   // หา fuel_type_id จากชื่อ fuel_type
   const fuelTypeQuery = 'SELECT fuel_type_id FROM fuel_types WHERE fuel_type_name = ?';
@@ -715,11 +757,11 @@ app.put('/transactions/:transaction_id', (req, res) => {
     // อัปเดต transaction
     const updateQuery = `
       UPDATE transactions 
-      SET fuel_type_id = ?, amount = ?, officer_id = ?
+      SET fuel_type_id = ?, points_balance = ?, officer_id = ?
       WHERE transaction_id = ?
     `;
 
-    db.query(updateQuery, [fuel_type_id, amount, officer_id, transaction_id], (err, result) => {
+    db.query(updateQuery, [fuel_type_id, points_balance, officer_id, transaction_id], (err, result) => {
       if (err) {
         console.error('Error updating transaction:', err);
         return res.status(500).json({ error: 'Error updating transaction' });
@@ -784,7 +826,7 @@ app.get('/staff/:staff_id', (req, res) => {
 app.get('/transactions/latest', async (req, res) => {
   try {
     const transactions = await db.query(
-      'SELECT transaction_id, customer_id, transaction_date, fuel_type_id, amount FROM transactions ORDER BY transaction_date DESC LIMIT 10'
+      'SELECT transaction_id, customer_id, transaction_date, fuel_type_id, points_balance FROM transactions ORDER BY transaction_date DESC LIMIT 10'
     );
     res.json(transactions);
   } catch (error) {
