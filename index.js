@@ -58,24 +58,25 @@ function generateRewardId() {
 
 // Create a new reward
 app.post('/rewards', upload.single('image'), (req, res) => {
-  const { reward_name, points_required, description } = req.body;
+  const { reward_name, points_required, quantity, description } = req.body;
   const image = req.file ? req.file.filename : null;
   const reward_id = generateRewardId();  // Generate reward_id
 
   console.log('Request Body:', req.body);
   console.log('Uploaded File:', req.file);
 
-  if (!reward_name || !points_required) {
-    return res.status(400).json({ error: 'Please provide reward_name and points_required' });
+  // Validate required fields
+  if (!reward_name || !points_required || !quantity) {
+    return res.status(400).json({ error: 'Please provide reward_name, points_required, and quantity' });
   }
 
-  // Validate that points_required is a number
-  if (isNaN(points_required)) {
-    return res.status(400).json({ error: 'Points required must be a number' });
+  // Validate that points_required and quantity are numbers
+  if (isNaN(points_required) || isNaN(quantity)) {
+    return res.status(400).json({ error: 'Points required and quantity must be numbers' });
   }
 
-  const query = 'INSERT INTO rewards (reward_id, reward_name, points_required, description, image) VALUES (?, ?, ?, ?, ?)';
-  const values = [reward_id, reward_name, points_required, description, image];
+  const query = 'INSERT INTO rewards (reward_id, reward_name, points_required, quantity, description, image) VALUES (?, ?, ?, ?, ?, ?)';
+  const values = [reward_id, reward_name, points_required, quantity, description, image];
 
   console.log('Executing Query:', query, values);
 
@@ -89,6 +90,7 @@ app.post('/rewards', upload.single('image'), (req, res) => {
       reward_id,  // Include the generated reward_id
       reward_name,
       points_required,
+      quantity,  // Include quantity in the response
       description,
       image
     });
@@ -127,15 +129,15 @@ app.delete('/rewards/:id', (req, res) => {
 // Update a reward by reward_id
 app.put('/rewards/:id', upload.single('image'), (req, res) => {
   const rewardId = req.params.id;
-  const { reward_name, points_required, description } = req.body;
+  const { reward_name, points_required, description, quantity } = req.body;
   const image = req.file ? req.file.filename : null;
 
-  // แสดงผลข้อมูลที่ส่งมาเพื่อการตรวจสอบ
+  // Log request for debugging
   console.log('Request Body:', req.body);
   console.log('Uploaded File:', req.file);
 
-  let query = 'UPDATE rewards SET reward_name = ?, points_required = ?, description = ?';
-  const values = [reward_name, points_required, description];
+  let query = 'UPDATE rewards SET reward_name = ?, points_required = ?, description = ?, quantity = ?';
+  const values = [reward_name, points_required, description, quantity];
 
   if (image) {
     query += ', image = ?';
@@ -159,6 +161,7 @@ app.put('/rewards/:id', upload.single('image'), (req, res) => {
       reward_name,
       points_required,
       description,
+      quantity,
       image
     });
   });
@@ -243,16 +246,17 @@ app.post('/login/customer', (req, res) => {
   });
 });
 
+
 // API สำหรับดึงข้อมูลลูกค้าตาม customer_id
 app.get('/customer/:customer_id', (req, res) => {
   const { customer_id } = req.params;
 
-  const query = `SELECT * FROM customers WHERE customer_id = ?`;
+  const query = `SELECT customer_id, points_balance, dividend FROM customers WHERE customer_id = ?`;
   db.query(query, [customer_id], (err, results) => {
     if (err) {
       return res.status(500).json({ message: 'มีข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล' });
     }
-    
+
     if (results.length > 0) {
       res.json({ customer: results[0] });
     } else {
@@ -261,12 +265,15 @@ app.get('/customer/:customer_id', (req, res) => {
   });
 });
 
-// API สำหรับดึงข้อมูลการทำธุรกรรม
+
+
+
+// API สำหรับดึงข้อมูลธุรกรรม
 app.get('/transactions/:customer_id', (req, res) => {
-  const customerId = req.params.customer_id;
+  const customerId = parseInt(req.params.customer_id, 10); // แปลงเป็น int
 
   const query = `
-    SELECT t.transaction_id, t.transaction_date, t.points_balance, f.fuel_type_name
+    SELECT t.transaction_id, t.transaction_date, t.points_earned, f.fuel_type_name
     FROM transactions t
     JOIN fuel_types f ON t.fuel_type_id = f.fuel_type_id
     WHERE t.customer_id = ?
@@ -283,58 +290,133 @@ app.get('/transactions/:customer_id', (req, res) => {
   });
 });
 
-// API สำหรับดึงข้อมูลรางวัล
-app.get('/rewards', (req, res) => {
-  const query = `SELECT * FROM rewards`;
-  db.query(query, (err, results) => {
-      if (err) {
-          return res.status(500).json({ message: 'มีข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล' });
-      }
-      res.json(results);
-  });
-});
 
-// Redeem reward
-app.post('/customers/redeem', (req, res) => {
+// ฟังก์ชันสำหรับสร้างรหัสแบบสุ่ม
+function generateRandomId(length) {
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+  return result;
+}
+
+// ฟังก์ชันสำหรับตรวจสอบความไม่ซ้ำของ redemption_id
+function isRedemptionIdUnique(redemptionId) {
+  return new Promise((resolve, reject) => {
+    const query = 'SELECT COUNT(*) AS count FROM redemptions WHERE redemption_id = ?';
+    db.query(query, [redemptionId], (err, results) => {
+      if (err) return reject(err);
+      resolve(results[0].count === 0);
+    });
+  });
+}
+
+// Endpoint สำหรับแลกของรางวัล
+app.post('/api/redeem', async (req, res) => {
   const { customer_id, reward_id, points_used } = req.body;
 
+  // ตรวจสอบว่าข้อมูลที่จำเป็นถูกส่งมาหรือไม่
+  if (!customer_id || !reward_id || !points_used) {
+    return res.status(400).json({ message: 'ข้อมูลไม่ครบถ้วน' });
+  }
+
+  // สร้าง redemption_id แบบสุ่มและตรวจสอบความไม่ซ้ำ
+  let redemption_id;
+  let isUnique = false;
+  try {
+    while (!isUnique) {
+      redemption_id = generateRandomId(10);
+      isUnique = await isRedemptionIdUnique(redemption_id);
+    }
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสร้างรหัสการแลก' });
+  }
+
+  // แปลง points_used เป็น int
+  const pointsUsedInt = parseInt(points_used, 10);
+  if (isNaN(pointsUsedInt) || pointsUsedInt <= 0) {
+    return res.status(400).json({ message: 'ค่าจำนวนแต้มไม่ถูกต้อง' });
+  }
+
   // ตรวจสอบคะแนนของลูกค้า
-  const checkPoints = `SELECT points_balance FROM customers WHERE customer_id = ?`;
+  const checkPoints = 'SELECT points_balance FROM customers WHERE customer_id = ?';
   db.query(checkPoints, [customer_id], (err, results) => {
-    if (err || results.length === 0) {
+    if (err) {
+      console.error(err);
       return res.status(500).json({ message: 'มีข้อผิดพลาดในการตรวจสอบคะแนน' });
     }
 
-    const pointsBalance = results[0].points_balance;
-    if (pointsBalance < points_used) {
+    if (results.length === 0) {
+      return res.status(404).json({ message: 'ไม่พบลูกค้าดังกล่าว' });
+    }
+
+    // แปลง points_balance เป็น int
+    const pointsBalance = parseInt(results[0].points_balance, 10);
+    if (isNaN(pointsBalance)) {
+      return res.status(500).json({ message: 'ข้อมูลคะแนนลูกค้ามีปัญหา' });
+    }
+
+    if (pointsBalance < pointsUsedInt) {
       return res.status(400).json({ message: 'คะแนนไม่เพียงพอ' });
     }
 
-    // อัปเดตคะแนนของลูกค้า
-    const updateCustomerPoints = `UPDATE customers SET points_balance = points_balance - ? WHERE customer_id = ?`;
-    db.query(updateCustomerPoints, [points_used, customer_id], (err) => {
+    // ตรวจสอบจำนวนสินค้าคงเหลือ
+    const checkQuantity = 'SELECT quantity FROM rewards WHERE reward_id = ?';
+    db.query(checkQuantity, [reward_id], (err, results) => {
       if (err) {
-        return res.status(500).json({ message: 'ไม่สามารถอัพเดตคะแนนได้' });
+        console.error(err);
+        return res.status(500).json({ message: 'มีข้อผิดพลาดในการตรวจสอบจำนวนสินค้า' });
       }
 
-      // อัปเดต dividend เป็น 1% ของ points_balance ใหม่
-      const newPointsBalance = pointsBalance - points_used; // ค่าคะแนนหลังจากหักคะแนน
-      const newDividend = newPointsBalance * 0.01; // คำนวณ dividend เป็น 1% ของ points_balance
+      if (results.length === 0) {
+        return res.status(404).json({ message: 'ไม่พบรางวัลดังกล่าว' });
+      }
 
-      const updateDividend = `UPDATE customers SET dividend = ? WHERE customer_id = ?`;
-      db.query(updateDividend, [newDividend, customer_id], (err) => {
+      const availableQuantity = results[0].quantity;
+      if (availableQuantity <= 0) {
+        return res.status(400).json({ message: 'สินค้าหมด' });
+      }
+
+      // อัปเดตจำนวนสินค้าคงเหลือ
+      const updateQuantity = 'UPDATE rewards SET quantity = quantity - 1 WHERE reward_id = ?';
+      db.query(updateQuantity, [reward_id], (err) => {
         if (err) {
-          return res.status(500).json({ message: 'ไม่สามารถอัปเดตปันผลได้' });
+          console.error(err);
+          return res.status(500).json({ message: 'ไม่สามารถอัพเดตจำนวนสินค้าได้' });
         }
 
-        // บันทึกการแลกของรางวัลในตาราง redemptions โดยให้ staff_id เป็น NULL
-        const insertRedemption = `INSERT INTO redemptions (customer_id, reward_id, redemption_date, points_used, status, staff_id) VALUES (?, ?, NOW(), ?, 'pending', NULL)`;
-
-        db.query(insertRedemption, [customer_id, reward_id, points_used], (err) => {
+        // อัปเดตคะแนนของลูกค้า
+        const updateCustomerPoints = 'UPDATE customers SET points_balance = points_balance - ? WHERE customer_id = ?';
+        db.query(updateCustomerPoints, [pointsUsedInt, customer_id], (err) => {
           if (err) {
-            return res.status(500).json({ message: 'ไม่สามารถบันทึกการแลกของรางวัลได้' });
+            console.error(err);
+            return res.status(500).json({ message: 'ไม่สามารถอัพเดตคะแนนได้' });
           }
-          res.status(200).json({ message: 'แลกของรางวัลสำเร็จ' });
+
+          // คำนวณและอัปเดตเงินปันผล
+          const updatedDividend = (pointsBalance - pointsUsedInt) * 0.01; // สมมุติว่าคุณต้องการให้ปันผล 1% ของคะแนนที่เหลือ
+          const updateDividendQuery = 'UPDATE customers SET dividend = ? WHERE customer_id = ?';
+          db.query(updateDividendQuery, [updatedDividend, customer_id], (err) => {
+            if (err) {
+              console.error(err);
+              return res.status(500).json({ message: 'ไม่สามารถอัปเดตเงินปันผลได้' });
+            }
+
+            // แทรกข้อมูลการแลกคะแนนเข้าสู่ตาราง redemptions
+            const insertRedemption = `
+              INSERT INTO redemptions (redemption_id, customer_id, reward_id, redemption_date, points_used, status)
+              VALUES (?, ?, ?, NOW(), ?, 'pending')
+            `;
+            db.query(insertRedemption, [redemption_id, customer_id, reward_id, pointsUsedInt], (err) => {
+              if (err) {
+                console.error(err);
+                return res.status(500).json({ message: 'ไม่สามารถบันทึกการแลกของรางวัลได้' });
+              }
+              res.status(200).json({ message: 'แลกของรางวัลสำเร็จ', redemption_id });
+            });
+          });
         });
       });
     });
@@ -604,7 +686,7 @@ app.post('/redemptions/delete_redemption', (req, res) => {
 app.post('/redemptions/search_redemptions', (req, res) => {
   const { status, reward_name } = req.body; // รับสถานะและชื่อรางวัลสำหรับการค้นหา
 
-  const query = `
+  let query = `
     SELECT 
       redemptions.redemption_id, 
       redemptions.customer_id, 
@@ -643,6 +725,7 @@ app.post('/redemptions/search_redemptions', (req, res) => {
     res.json({ redemptions: results });
   });
 });
+
 
 // API สำหรับดึงข้อมูลการแลกสินค้าที่สถานะเป็น 'pending'
 app.post('/redemptions/get_redemptions', (req, res) => {
@@ -994,30 +1077,49 @@ app.get('/annual_dividends', (req, res) => {
   });
 });
 
-// API to fetch fuel type statistics from the transactions table
+// ดึงข้อมูลสถิติการเติมน้ำมันตามประเภทและช่วงเวลา
 app.get('/fuel_type_stats', (req, res) => {
-  const { fuel_type } = req.query;
-
-  if (!fuel_type) {
-    return res.status(400).json({ message: 'Fuel type is required' });
+  const { fuel_type, filter, year, month, day } = req.query;
+  let dateCondition = '';
+  
+  // สร้างเงื่อนไขการกรองตามช่วงเวลา
+  if (filter === 'day' && year && month && day) {
+    dateCondition = `AND YEAR(t.transaction_date) = ${db.escape(year)} 
+                     AND MONTH(t.transaction_date) = ${db.escape(month)} 
+                     AND DAY(t.transaction_date) = ${db.escape(day)}`;
+  } else if (filter === 'month' && year && month) {
+    dateCondition = `AND YEAR(t.transaction_date) = ${db.escape(year)} 
+                     AND MONTH(t.transaction_date) = ${db.escape(month)}`;
+  } else if (filter === 'year' && year) {
+    dateCondition = `AND YEAR(t.transaction_date) = ${db.escape(year)}`;
   }
 
+  // Query สำหรับดึงข้อมูลจำนวนคนและจำนวนครั้งที่เติมน้ำมัน
   const query = `
-    SELECT 
-      COUNT(DISTINCT customer_id) AS peopleCount,  
-      COUNT(*) AS refuelCount                      
+    SELECT c.customer_id, c.first_name, c.last_name, COUNT(t.transaction_id) AS refuelCount
     FROM transactions t
+    JOIN customers c ON t.customer_id = c.customer_id
     JOIN fuel_types f ON t.fuel_type_id = f.fuel_type_id
-    WHERE f.fuel_type_name = ?
+    WHERE f.fuel_type_name = ${db.escape(fuel_type)} 
+    ${dateCondition}
+    GROUP BY c.customer_id
   `;
 
-  db.query(query, [fuel_type], (err, results) => {
-    if (err) {
-      console.error('Error fetching fuel type stats:', err);
-      return res.status(500).json({ message: 'Failed to fetch fuel type stats', error: err.message });
+  db.query(query, (error, results) => {
+    if (error) {
+      console.error('Error fetching fuel type stats:', error);
+      res.status(500).json({ error: 'Failed to fetch fuel type stats' });
+      return;
     }
 
-    res.json(results[0]);
+    const peopleCount = results.length; // จำนวนคนที่เติมน้ำมัน
+    const refuelCount = results.reduce((acc, person) => acc + person.refuelCount, 0); // จำนวนครั้งที่เติมทั้งหมด
+
+    res.json({
+      peopleCount,
+      refuelCount,
+      peopleList: results,
+    });
   });
 });
 
