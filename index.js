@@ -172,14 +172,14 @@ app.put('/rewards/:id', upload.single('image'), (req, res) => {
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.post('/officers/login', (req, res) => {
-  const { officer_id, phone_number } = req.body;
+  const { officer_id, password } = req.body;
   
   const query = `
     SELECT * FROM officers
-    WHERE officer_id = ? AND phone_number = ?
+    WHERE officer_id = ? AND password = ?
   `;
   
-  db.query(query, [officer_id, phone_number], (err, results) => {
+  db.query(query, [officer_id, password], (err, results) => {
     if (err) {
       console.error('Error during login:', err);  // Log ข้อผิดพลาดที่เกิดขึ้น
       res.status(500).json({ error: 'An error occurred during login' });
@@ -187,7 +187,7 @@ app.post('/officers/login', (req, res) => {
     }
     
     if (results.length === 0) {
-      res.status(404).json({ error: 'Invalid officer ID or phone number' });
+      res.status(404).json({ error: 'Invalid officer ID or password' });
       return;
     }
     
@@ -199,14 +199,14 @@ app.post('/officers/login', (req, res) => {
 });
 
 app.post('/staff/login', (req, res) => {
-  const { staff_id, phone_number } = req.body;
+  const { staff_id, password } = req.body;
   
   const query = `
     SELECT * FROM staff
-    WHERE staff_id = ? AND phone_number = ?
+    WHERE staff_id = ? AND password = ?
   `;
   
-  db.query(query, [staff_id, phone_number], (err, results) => {
+  db.query(query, [staff_id, password], (err, results) => {
     if (err) {
       console.error('Error during login:', err);  // Log ข้อผิดพลาดที่เกิดขึ้น
       res.status(500).json({ error: 'An error occurred during login' });
@@ -214,7 +214,7 @@ app.post('/staff/login', (req, res) => {
     }
     
     if (results.length === 0) {
-      res.status(404).json({ error: 'Invalid staff ID or phone number' });
+      res.status(404).json({ error: 'Invalid staff ID or password' });
       return;
     }
     
@@ -226,47 +226,34 @@ app.post('/staff/login', (req, res) => {
 });
 
 // API สำหรับการ login ลูกค้า
-app.post('/login/customer', (req, res) => {
-  const { customer_id, phone_number } = req.body;
-
-  const query = `SELECT * FROM customers WHERE customer_id = ? AND phone_number = ?`;
-  db.query(query, [customer_id, phone_number], (err, results) => {
+app.post('/customer/login', (req, res) => { // แก้ไข URL ให้เป็น '/customer/login'
+  const { customer_id, password } = req.body; // แก้ไขเป็น customer_id
+  
+  const query = `
+    SELECT * FROM customers
+    WHERE customer_id = ? AND password = ?
+  `;
+  
+  db.query(query, [customer_id, password], (err, results) => {
     if (err) {
-      console.error('Database query error:', err);
-      return res.status(500).json({ message: 'มีข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล' });
+      console.error('Error during login:', err);  // Log ข้อผิดพลาดที่เกิดขึ้น
+      res.status(500).json({ error: 'An error occurred during login' });
+      return;
     }
-
-    if (results.length > 0) {
-      console.log('Login successful:', results[0]);
-      res.json({ message: 'ล็อกอินสำเร็จ', customer: results[0] });
-    } else {
-      console.log('Invalid login credentials');
-      res.status(401).json({ message: 'ข้อมูลล็อกอินไม่ถูกต้อง' });
+    
+    if (results.length === 0) {
+      res.status(404).json({ error: 'Invalid customer ID or password' });
+      return;
     }
+    
+    // คืนค่าข้อมูลลูกค้าที่เข้าสู่ระบบสำเร็จ
+    res.json({
+      message: 'Login successful',
+      customerId: customer_id, // แก้ไขเป็น customerId
+      customer: results[0] // คืนค่าข้อมูลลูกค้า (ถ้าต้องการ)
+    });
   });
 });
-
-
-// API สำหรับดึงข้อมูลลูกค้าตาม customer_id
-app.get('/customer/:customer_id', (req, res) => {
-  const { customer_id } = req.params;
-
-  const query = `SELECT customer_id, points_balance, dividend FROM customers WHERE customer_id = ?`;
-  db.query(query, [customer_id], (err, results) => {
-    if (err) {
-      return res.status(500).json({ message: 'มีข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล' });
-    }
-
-    if (results.length > 0) {
-      res.json({ customer: results[0] });
-    } else {
-      res.status(404).json({ message: 'ไม่พบข้อมูลลูกค้า' });
-    }
-  });
-});
-
-
-
 
 // API สำหรับดึงข้อมูลธุรกรรม
 app.get('/transactions/:customer_id', (req, res) => {
@@ -290,6 +277,23 @@ app.get('/transactions/:customer_id', (req, res) => {
   });
 });
 
+// API สำหรับดึงข้อมูลลูกค้าตาม customer_id
+app.get('/customer/:customer_id', (req, res) => {
+  const { customer_id } = req.params;
+
+  const query = `SELECT customer_id, points_balance, dividend FROM customers WHERE customer_id = ?`;
+  db.query(query, [customer_id], (err, results) => {
+    if (err) {
+      return res.status(500).json({ message: 'มีข้อผิดพลาดในการเชื่อมต่อฐานข้อมูล' });
+    }
+
+    if (results.length > 0) {
+      res.json({ customer: results[0] });
+    } else {
+      res.status(404).json({ message: 'ไม่พบข้อมูลลูกค้า' });
+    }
+  });
+});
 
 // ฟังก์ชันสำหรับสร้างรหัสแบบสุ่ม
 function generateRandomId(length) {
@@ -316,9 +320,29 @@ function isRedemptionIdUnique(redemptionId) {
 app.post('/api/redeem', async (req, res) => {
   const { customer_id, reward_id, points_used } = req.body;
 
+  // Log ข้อมูลที่ได้รับ
+  console.log('Redeeming reward for customer:', customer_id);
+  console.log('Reward ID:', reward_id);
+  console.log('Points used:', points_used);
+
+  // ตรวจสอบคะแนนของลูกค้า
+  const checkPoints = 'SELECT points_balance FROM customers WHERE customer_id = ?';
+  db.query(checkPoints, [customer_id], async (err, results) => {
+    if (err) {
+      console.error('Error checking points:', err);
+      return res.status(500).json({ message: 'มีข้อผิดพลาดในการตรวจสอบคะแนน' });
+    }
+    console.log('Customer points:', results);
+
   // ตรวจสอบว่าข้อมูลที่จำเป็นถูกส่งมาหรือไม่
-  if (!customer_id || !reward_id || !points_used) {
+  if (!customer_id || !reward_id || !points_used || !quantity) {
     return res.status(400).json({ message: 'ข้อมูลไม่ครบถ้วน' });
+  }
+
+  // ตรวจสอบว่า quantity มากกว่า 0 หรือไม่
+  const redeemQuantity = parseInt(quantity, 10);
+  if (isNaN(redeemQuantity) || redeemQuantity <= 0) {
+    return res.status(400).json({ message: 'จำนวนรางวัลไม่ถูกต้อง' });
   }
 
   // สร้าง redemption_id แบบสุ่มและตรวจสอบความไม่ซ้ำ
@@ -334,7 +358,6 @@ app.post('/api/redeem', async (req, res) => {
     return res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสร้างรหัสการแลก' });
   }
 
-  // แปลง points_used เป็น int
   const pointsUsedInt = parseInt(points_used, 10);
   if (isNaN(pointsUsedInt) || pointsUsedInt <= 0) {
     return res.status(400).json({ message: 'ค่าจำนวนแต้มไม่ถูกต้อง' });
@@ -352,13 +375,10 @@ app.post('/api/redeem', async (req, res) => {
       return res.status(404).json({ message: 'ไม่พบลูกค้าดังกล่าว' });
     }
 
-    // แปลง points_balance เป็น int
     const pointsBalance = parseInt(results[0].points_balance, 10);
-    if (isNaN(pointsBalance)) {
-      return res.status(500).json({ message: 'ข้อมูลคะแนนลูกค้ามีปัญหา' });
-    }
+    const totalPointsRequired = pointsUsedInt * redeemQuantity; // คะแนนที่ต้องใช้ทั้งหมด
 
-    if (pointsBalance < pointsUsedInt) {
+    if (pointsBalance < totalPointsRequired) {
       return res.status(400).json({ message: 'คะแนนไม่เพียงพอ' });
     }
 
@@ -375,28 +395,28 @@ app.post('/api/redeem', async (req, res) => {
       }
 
       const availableQuantity = results[0].quantity;
-      if (availableQuantity <= 0) {
-        return res.status(400).json({ message: 'สินค้าหมด' });
+      if (availableQuantity < redeemQuantity) {
+        return res.status(400).json({ message: 'สินค้าคงเหลือไม่เพียงพอ' });
       }
 
       // อัปเดตจำนวนสินค้าคงเหลือ
-      const updateQuantity = 'UPDATE rewards SET quantity = quantity - 1 WHERE reward_id = ?';
-      db.query(updateQuantity, [reward_id], (err) => {
+      const updateQuantity = 'UPDATE rewards SET quantity = quantity - ? WHERE reward_id = ?';
+      db.query(updateQuantity, [redeemQuantity, reward_id], (err) => {
         if (err) {
           console.error(err);
-          return res.status(500).json({ message: 'ไม่สามารถอัพเดตจำนวนสินค้าได้' });
+          return res.status(500).json({ message: 'ไม่สามารถอัปเดตจำนวนสินค้าได้' });
         }
 
         // อัปเดตคะแนนของลูกค้า
         const updateCustomerPoints = 'UPDATE customers SET points_balance = points_balance - ? WHERE customer_id = ?';
-        db.query(updateCustomerPoints, [pointsUsedInt, customer_id], (err) => {
+        db.query(updateCustomerPoints, [totalPointsRequired, customer_id], (err) => {
           if (err) {
             console.error(err);
             return res.status(500).json({ message: 'ไม่สามารถอัพเดตคะแนนได้' });
           }
 
           // คำนวณและอัปเดตเงินปันผล
-          const updatedDividend = (pointsBalance - pointsUsedInt) * 0.01; // สมมุติว่าคุณต้องการให้ปันผล 1% ของคะแนนที่เหลือ
+          const updatedDividend = (pointsBalance - totalPointsRequired) * 0.01; 
           const updateDividendQuery = 'UPDATE customers SET dividend = ? WHERE customer_id = ?';
           db.query(updateDividendQuery, [updatedDividend, customer_id], (err) => {
             if (err) {
@@ -406,22 +426,23 @@ app.post('/api/redeem', async (req, res) => {
 
             // แทรกข้อมูลการแลกคะแนนเข้าสู่ตาราง redemptions
             const insertRedemption = `
-              INSERT INTO redemptions (redemption_id, customer_id, reward_id, redemption_date, points_used, status)
-              VALUES (?, ?, ?, NOW(), ?, 'pending')
+              INSERT INTO redemptions (redemption_id, customer_id, reward_id, redemption_date, points_used, status, quantity)
+              VALUES (?, ?, ?, NOW(), ?, 'pending', ?)
             `;
-            db.query(insertRedemption, [redemption_id, customer_id, reward_id, pointsUsedInt], (err) => {
+            db.query(insertRedemption, [redemption_id, customer_id, reward_id, totalPointsRequired, redeemQuantity], (err) => {
               if (err) {
                 console.error(err);
                 return res.status(500).json({ message: 'ไม่สามารถบันทึกการแลกของรางวัลได้' });
               }
               res.status(200).json({ message: 'แลกของรางวัลสำเร็จ', redemption_id });
             });
+            });
+            });
           });
         });
       });
     });
   });
-});
 
 // API สำหรับดึงข้อมูลรางวัลที่ลูกค้าแลก
 app.get('/redeemed/:customer_id', (req, res) => {
@@ -435,6 +456,7 @@ app.get('/redeemed/:customer_id', (req, res) => {
       r.description, 
       rd.redemption_date, 
       rd.points_used,
+      rd.quantity,  -- ดึง quantity จากตาราง redemptions
       rd.status
     FROM redemptions rd
     JOIN rewards r ON rd.reward_id = r.reward_id
@@ -454,6 +476,7 @@ app.get('/redeemed/:customer_id', (req, res) => {
     }
   });
 });
+
 
 // API สำหรับค้นหาธุรกรรม
 app.get('/transactions', (req, res) => {
@@ -681,6 +704,8 @@ app.post('/redemptions/delete_redemption', (req, res) => {
     res.json({ message: 'Redemption deleted successfully!' });
   });
 });
+
+
 
 // API สำหรับดึงรายการการแลกสินค้าตามสถานะและค้นหาชื่อรางวัล
 app.post('/redemptions/search_redemptions', (req, res) => {
@@ -1050,6 +1075,7 @@ app.get('/customers', (req, res) => {
   });
 });
 
+
 // Endpoint สำหรับดึงข้อมูลปันผลรายปี พร้อมการกรองตามปีและลูกค้า
 app.get('/annual_dividends', (req, res) => {
   const { year, customer_id } = req.query;
@@ -1121,6 +1147,33 @@ app.get('/fuel_type_stats', (req, res) => {
       peopleList: results,
     });
   });
+});
+
+app.get('/customers/:customerId/dividends', (req, res) => {
+  const customerId = req.params.customerId;
+  db.query(
+    'SELECT * FROM annual_dividends WHERE customer_id = ?',
+    [customerId],
+    (error, results) => {
+      if (error) return res.status(500).send(error);
+      res.json(results);
+    }
+  );
+});
+
+// แก้ไขข้อมูลลูกค้า
+app.put('/customers/:customerId', (req, res) => {
+  const customerId = req.params.customerId;
+  const { first_name, last_name, phone_number, points_balance } = req.body;
+  db.query(
+    'UPDATE customers SET first_name = ?, last_name = ?, phone_number = ?, points_balance = ? WHERE customer_id = ?',
+    [first_name, last_name, phone_number, points_balance, customerId],
+    (error, results) => {
+      if (error) return res.status(500).send(error);
+      if (results.affectedRows === 0) return res.status(404).send('Customer not found');
+      res.send('Customer updated successfully');
+    }
+  );
 });
 
 app.listen(port, () => {
