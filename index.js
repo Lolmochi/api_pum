@@ -456,7 +456,7 @@ app.get('/redeemed/:customer_id', (req, res) => {
       r.description, 
       rd.redemption_date, 
       rd.points_used,
-      rd.quantity,  -- ดึง quantity จากตาราง redemptions
+      rd.quantity,  
       rd.status
     FROM redemptions rd
     JOIN rewards r ON rd.reward_id = r.reward_id
@@ -757,7 +757,7 @@ app.post('/redemptions/get_redemptions', (req, res) => {
   const { staff_id } = req.body;
 
   const query = `
-    SELECT redemption_id, customer_id, reward_id, redemption_date, points_used, status
+    SELECT redemption_id, customer_id, reward_id, quantity, redemption_date, points_used, status
     FROM redemptions
     WHERE status = 'pending'
   `;
