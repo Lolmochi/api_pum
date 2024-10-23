@@ -17,7 +17,8 @@ const db = mysql.createConnection({
   host: 'localhost',
   user: 'root',
   password: '',
-  database: 'gas_station_loyalty'
+  database: 'gas_station_loyalty',
+  charset: 'utf8mb4' // ต้องใส่ในคีย์ charset แบบนี้
 });
 
 db.connect((err) => {
@@ -27,6 +28,7 @@ db.connect((err) => {
   }
   console.log('Connected to the MySQL database');
 });
+
 
 // Setup for multer
 const uploadPath = path.join(__dirname, 'uploads');
@@ -55,6 +57,39 @@ function generateRewardId() {
   }
   return rewardId;
 }
+
+// API สำหรับอัปโหลดรูปภาพ
+app.post('/upload_image', upload.single('image'), (req, res) => {
+  const { officer_id, description } = req.body;
+  const imageUrl = `uploads/${req.file.filename}`;
+
+  if (!officer_id || !description) {
+      return res.status(400).json({ message: 'Officer ID and description are required' });
+  }
+
+  const sql = 'INSERT INTO image_for_new (officer_id, image_url, description) VALUES (?, ?, ?)';
+  db.query(sql, [officer_id, imageUrl, description], (err, result) => {
+      if (err) {
+          console.error('Error inserting data:', err);
+          return res.status(500).json({ message: 'Failed to upload image' });
+      }
+      res.status(200).json({ message: 'Image uploaded successfully', image_id: result.insertId });
+  });
+});
+
+// Route เพื่อดึงข้อมูลรูปภาพจากตาราง image_for_new
+app.get('/image_for_new', (req, res) => {
+  const query = 'SELECT image_url, description FROM image_for_new ORDER BY uploaded_at DESC LIMIT 6'; // จำกัดแค่ 6 รูปล่าสุด
+
+  connection.query(query, (err, results) => {
+    if (err) {
+      console.error('Error fetching images: ', err);
+      res.status(500).json({ error: 'Failed to fetch images' });
+      return;
+    }
+    res.json(results); // ส่งข้อมูล URL รูปภาพและคำอธิบายกลับไปในรูปแบบ JSON
+  });
+});
 
 // Create a new reward
 app.post('/rewards', upload.single('image'), (req, res) => {
@@ -251,6 +286,49 @@ app.post('/customer/login', (req, res) => { // แก้ไข URL ให้เ�
       message: 'Login successful',
       customerId: customer_id, // แก้ไขเป็น customerId
       customer: results[0] // คืนค่าข้อมูลลูกค้า (ถ้าต้องการ)
+    });
+  });
+});
+
+
+// Change Password Route
+app.post('/change_password', async (req, res) => {
+  const { customerId, oldPassword, newPassword } = req.body;
+
+  if (!customerId || !oldPassword || !newPassword) {
+    return res.status(400).json({ message: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
+  }
+
+  // Query to get the user from the database
+  const query = 'SELECT password FROM users WHERE id = ?';
+  db.query(query, [customerId], async (err, results) => {
+    if (err) {
+      return res.status(500).json({ message: 'เกิดข้อผิดพลาดในการเข้าถึงฐานข้อมูล' });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: 'ไม่พบผู้ใช้' });
+    }
+
+    const user = results[0];
+
+    // Check if the old password is correct
+    const isMatch = await bcrypt.compare(oldPassword, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'รหัสผ่านเก่าไม่ถูกต้อง' });
+    }
+
+    // Hash the new password
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update the password in the database
+    const updateQuery = 'UPDATE users SET password = ? WHERE id = ?';
+    db.query(updateQuery, [hashedNewPassword, customerId], (err) => {
+      if (err) {
+        return res.status(500).json({ message: 'เกิดข้อผิดพลาดในการเปลี่ยนรหัสผ่าน' });
+      }
+
+      res.status(200).json({ message: 'เปลี่ยนรหัสผ่านสำเร็จ' });
     });
   });
 });
