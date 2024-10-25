@@ -33,6 +33,7 @@ db.connect((err) => {
 // Setup for multer
 const uploadPath = path.join(__dirname, 'uploads');
 
+
 if (!fs.existsSync(uploadPath)) {
   fs.mkdirSync(uploadPath, { recursive: true });
 }
@@ -48,6 +49,31 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
+
+
+
+const uploadPathnews = path.join(__dirname, 'uploadnews');
+
+
+if (!fs.existsSync(uploadPathnews)) {
+  fs.mkdirSync(uploadPathnews, { recursive: true });
+}
+
+const storage1 = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadPathnews);
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+
+const uploadnews = multer({ storage: storage1 });
+
+
+
+
+
 // Function to generate a random 10-character alphanumeric reward ID
 function generateRewardId() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -58,38 +84,63 @@ function generateRewardId() {
   return rewardId;
 }
 
-// API สำหรับอัปโหลดรูปภาพ
-app.post('/upload_image', upload.single('image'), (req, res) => {
-  const { officer_id, description } = req.body;
-  const imageUrl = `uploads/${req.file.filename}`;
+// API สำหรับอัปโหลดภาพ
+app.post('/upload_image', uploadnews.single('image'), (req, res) => {
+  const officerId = req.body.officer_id;
+  const description = req.body.description;
+  const imageUrl = req.file ? req.file.filename : null;
 
-  if (!officer_id || !description) {
-      return res.status(400).json({ message: 'Officer ID and description are required' });
-  }
-
-  const sql = 'INSERT INTO image_for_new (officer_id, image_url, description) VALUES (?, ?, ?)';
-  db.query(sql, [officer_id, imageUrl, description], (err, result) => {
-      if (err) {
-          console.error('Error inserting data:', err);
-          return res.status(500).json({ message: 'Failed to upload image' });
-      }
-      res.status(200).json({ message: 'Image uploaded successfully', image_id: result.insertId });
-  });
-});
-
-// Route เพื่อดึงข้อมูลรูปภาพจากตาราง image_for_new
-app.get('/image_for_new', (req, res) => {
-  const query = 'SELECT image_url, description FROM image_for_new ORDER BY uploaded_at DESC LIMIT 6'; // จำกัดแค่ 6 รูปล่าสุด
-
-  connection.query(query, (err, results) => {
+  const sql = 'INSERT INTO images (image_url, officer_id, description, status) VALUES (?, ?, ?, ?)';
+  db.query(sql, [imageUrl, officerId, description, 'false'], (err, result) => {
     if (err) {
-      console.error('Error fetching images: ', err);
-      res.status(500).json({ error: 'Failed to fetch images' });
-      return;
+      return res.status(500).send(err);
     }
-    res.json(results); // ส่งข้อมูล URL รูปภาพและคำอธิบายกลับไปในรูปแบบ JSON
+    res.status(200).send({ message: 'Image uploaded successfully', imageId: result.insertId });
   });
 });
+
+// API สำหรับดึงข้อมูลภาพทั้งหมด
+app.get('/get_images', (req, res) => {
+  const sql = 'SELECT * FROM images';
+  db.query(sql, (err, results) => {
+    if (err) {
+      return res.status(500).send(err);
+    }
+    res.status(200).json(results);
+  });
+});
+
+// API สำหรับอัปเดตสถานะภาพ
+app.post('/update_image_status', (req, res) => {
+  const { image_id, officer_id, status } = req.body;
+  const sql = 'UPDATE images SET status = ? WHERE image_id = ? AND officer_id = ?';
+  db.query(sql, [status, image_id, officer_id], (err, result) => {
+    if (err) {
+      return res.status(500).send(err);
+    }
+    res.status(200).send({ message: 'Image status updated successfully' });
+  });
+});
+
+app.get('/get_active_images', (req, res) => {
+  const sql = "SELECT * FROM images WHERE status = 'true'"; // ดึงภาพที่มีสถานะเป็น 'true'
+  
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error('Database query error:', err); // บันทึกข้อผิดพลาดใน console
+      return res.status(500).json({ error: 'Internal server error', details: err.message }); // ส่งข้อความผิดพลาดที่ชัดเจน
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: 'No active images found' }); // แจ้งว่าไม่มีภาพที่ใช้งานอยู่
+    }
+
+    res.status(200).json(results); // ส่งผลลัพธ์ที่ได้ในรูปแบบ JSON
+  });
+});
+
+
+
 
 // Create a new reward
 app.post('/rewards', upload.single('image'), (req, res) => {
@@ -205,6 +256,7 @@ app.put('/rewards/:id', upload.single('image'), (req, res) => {
 
 // Serve static images
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploadnews', express.static(path.join(__dirname, 'uploadnews')));
 
 app.post('/officers/login', (req, res) => {
   const { officer_id, password } = req.body;
@@ -831,22 +883,35 @@ app.post('/redemptions/search_redemptions', (req, res) => {
 
 
 // API สำหรับดึงข้อมูลการแลกสินค้าที่สถานะเป็น 'pending'
-app.post('/redemptions/get_redemptions', (req, res) => {
-  const { staff_id } = req.body;
+app.get('/staff_record/transactions/:staff_id', (req, res) => {
+  const staffId = req.params.staff_id;
 
   const query = `
-    SELECT redemption_id, customer_id, reward_id, quantity, redemption_date, points_used, status
-    FROM redemptions
-    WHERE status = 'pending'
+      SELECT 
+          t.transaction_id,
+          t.customer_id,
+          CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+          t.transaction_date,
+          f.fuel_type_name,
+          t.points_earned,
+          t.officer_id,
+          t.modified_at
+      FROM 
+          transactions t
+      JOIN 
+          customers c ON t.customer_id = c.customer_id
+      JOIN 
+          fuel_types f ON t.fuel_type_id = f.fuel_type_id
+      WHERE 
+          t.staff_id = ?
   `;
 
-  db.query(query, [staff_id], (err, results) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json({ message: 'Database connection error' });
-    }
-
-    res.json({ redemptions: results });
+  db.query(query, [staffId], (err, results) => {
+      if (err) {
+          console.error('Error fetching transactions:', err);
+          return res.status(500).json({ error: 'Database error' });
+      }
+      res.json(results);
   });
 });
 
